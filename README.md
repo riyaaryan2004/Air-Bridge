@@ -1,4 +1,4 @@
-# ChatShare
+# Air Bridge
 
 ChatShare is a multi-user messaging and file-sharing system for local networks. It includes the original Python socket clients plus a browser-based LAN web app.
 
@@ -63,7 +63,9 @@ Open the `Network` URL from any phone/laptop connected to the same Wi-Fi/LAN.
 
 The website supports:
 
-- room-based group chat
+- login / registration with username and password
+- personal and group chat using generated room IDs with saved message history
+- friend search, connection requests, and accept/ignore handling
 - online users
 - typing status
 - file upload and download links

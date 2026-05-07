@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ChatShare LAN</title>
+    <title>AIR-Bridge</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="shell">
       <section class="join-panel" id="joinPanel">
         <div class="brand">
-          <div class="brand-mark">CS</div>
+          <div class="brand-mark">AB</div>
           <div>
-            <h1>ChatShare LAN</h1>
-            <p>Offline room chat and file sharing</p>
+            <h1>AIR-Bridge</h1>
+            <p>Private LAN chat and file sharing</p>
           </div>
         </div>
 
@@ -23,40 +23,96 @@
             <input id="usernameInput" autocomplete="name" maxlength="24" required />
           </label>
           <label>
-            <span>Room</span>
-            <input id="roomInput" value="lab" maxlength="32" required />
+            <span>Password</span>
+            <input id="passwordInput" type="password" autocomplete="current-password" maxlength="64" required />
           </label>
-          <button type="submit">Join Room</button>
+          <button id="joinButton" type="submit">Login</button>
+          <button id="toggleRegister" type="button" class="secondary">Register New Account</button>
+          <div id="joinNotice" class="notice">Use your account to join a room. If you are new, register first.</div>
         </form>
       </section>
 
       <section class="chat-panel hidden" id="chatPanel">
-        <header class="topbar">
-          <div>
-            <div class="eyebrow">Room</div>
-            <h2 id="roomTitle">lab</h2>
-          </div>
-          <div class="status" id="connectionStatus">Connecting</div>
-        </header>
-
         <aside class="people">
-          <div class="aside-title">Online</div>
+          <div class="profile-card">
+            <div class="avatar large" id="profileAvatar">AB</div>
+            <div class="profile-copy">
+              <div id="profileName" class="profile-name">Guest</div>
+              <div class="profile-subtitle">
+                <span class="presence-dot"></span>
+                <span id="profileStatus">Ready to connect</span>
+              </div>
+            </div>
+            <button id="logoutButton" type="button" class="icon-button" title="Logout">Logout</button>
+            <div class="profile-stats">
+              <span>Friends</span>
+              <strong id="friendsCount">0</strong>
+            </div>
+          </div>
+
+          <div class="aside-title">Search Users</div>
+          <div class="search-row">
+            <input id="searchInput" placeholder="username..." autocomplete="off" />
+            <button id="searchButton" type="button">Search</button>
+          </div>
+          <div id="searchResults" class="users-list"></div>
+
+          <div class="section-heading">
+            <span>Online Now</span>
+            <span id="onlineCount" class="count-pill">0</span>
+          </div>
           <div id="usersList" class="users-list"></div>
+
+          <div class="aside-title">Requests</div>
+          <div id="requestsList" class="users-list"></div>
+
+          <div class="aside-title">Friends</div>
+          <div id="friendsList" class="users-list"></div>
+
+          <div class="aside-title">Conversations</div>
+          <div id="roomsList" class="users-list"></div>
+
+          <div class="aside-title">New Group</div>
+          <label>
+            <input id="newRoomTitleInput" placeholder="Group name" autocomplete="off" />
+          </label>
+          <div id="groupFriendPicker" class="group-picker"></div>
+          <button id="createRoomButton" type="button">Create</button>
+
+          <div class="aside-title">Join by ID</div>
+          <label>
+            <input id="roomIdInput" placeholder="Paste room ID" autocomplete="off" />
+          </label>
+          <button id="joinRoomButton" type="button">Join</button>
         </aside>
 
         <section class="conversation">
+          <header class="topbar">
+            <div class="conversation-heading">
+              <div class="avatar" id="roomAvatar">#</div>
+              <div>
+                <div class="eyebrow">Conversation</div>
+                <h2 id="roomTitle">Select a conversation</h2>
+              </div>
+            </div>
+            <div class="status" id="connectionStatus">Offline</div>
+          </header>
+
           <div id="messages" class="messages"></div>
           <div id="typingLine" class="typing-line"></div>
           <form id="messageForm" class="composer">
             <label class="file-btn" title="Share file">
               <input id="fileInput" type="file" multiple />
-              <span>Files</span>
+              <span aria-hidden="true">&#128206;</span>
+              <span class="sr-only">Share file</span>
             </label>
             <label class="file-btn" title="Share folder">
               <input id="folderInput" type="file" multiple webkitdirectory />
-              <span>Folder</span>
+              <span aria-hidden="true">&#128193;</span>
+              <span class="sr-only">Share folder</span>
             </label>
-            <input id="messageInput" placeholder="Message" autocomplete="off" />
+            <button id="voiceButton" type="button" class="voice-btn" title="Record voice message" aria-label="Record voice message">&#127908;</button>
+            <input id="messageInput" placeholder="Type a message..." autocomplete="off" />
             <button type="submit">Send</button>
           </form>
           <div id="uploadProgress" class="upload-progress hidden">
