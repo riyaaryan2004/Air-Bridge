@@ -12,6 +12,14 @@ function initials(value) {
     .join("") || "AB";
 }
 
+function Avatar({ name, photo = "", large = false }) {
+  return (
+    <span className={`avatar ${large ? "large" : ""} ${photo ? "photo-avatar" : ""}`}>
+      {photo ? <img src={photo} alt={name} loading="lazy" /> : initials(name)}
+    </span>
+  );
+}
+
 function App() {
   const [token, setToken] = useState(localStorage.getItem("chatshareToken") || "");
   const [username, setUsername] = useState(localStorage.getItem("chatshareUsername") || "");
@@ -423,7 +431,24 @@ function App() {
           </header>
 
           <div className="messages" ref={messagesRef}>
-            {messages.map((message) => <Message key={message.id} item={message} username={username} />)}
+            {messages.map((message, index) => {
+              const previous = messages[index - 1];
+              const showGroupAvatar = Boolean(
+                activeRoom?.is_group &&
+                message.sender &&
+                message.sender !== username &&
+                previous?.sender !== message.sender
+              );
+              return (
+                <Message
+                  key={message.id}
+                  item={message}
+                  username={username}
+                  room={activeRoom}
+                  showGroupAvatar={showGroupAvatar}
+                />
+              );
+            })}
           </div>
           <div className="typing-line">{typingLine}</div>
           <form className="composer" onSubmit={sendMessage}>
@@ -536,41 +561,57 @@ function RoomInfo({ room, friends, friendData, addMembersOpen, setAddMembersOpen
   );
 }
 
-function Message({ item, username }) {
+function Message({ item, username, room, showGroupAvatar }) {
   const mine = item.sender === username;
   if (item.kind === "system") return <article className="message system">{item.text}</article>;
+  const groupPeerMessage = Boolean(room?.is_group && item.sender && !mine);
+  const content = renderMessageContent(item, mine);
+  if (groupPeerMessage) {
+    return (
+      <article className={`message group-peer-message ${showGroupAvatar ? "with-avatar" : "continued"}`}>
+        <span className="message-avatar-slot" aria-hidden="true">
+          {showGroupAvatar ? <Avatar name={item.sender} photo={room.member_photos?.[item.sender] || ""} /> : null}
+        </span>
+        <div className="message-body">{content}</div>
+      </article>
+    );
+  }
+  return <article className={`message ${mine ? "mine" : ""}`}>{content}</article>;
+}
+
+function renderMessageContent(item, mine) {
   if (item.type === "file" || item.kind === "file" || item.kind === "voice") {
     if (item.kind === "voice") {
       return (
-        <article className={`message ${mine ? "mine" : ""}`}>
+        <>
           <div className="meta"><strong>{mine ? "You" : item.sender}</strong><span>{item.time}</span></div>
           <audio controls preload="metadata" src={item.url}></audio>
-        </article>
+        </>
       );
     }
     if (isImageFile(item.filename)) {
       return (
-        <article className={`message ${mine ? "mine" : ""}`}>
+        <>
           <div className="meta"><strong>{mine ? "You" : item.sender}</strong><span>{item.time}</span></div>
           <a className="image-message" href={item.url} target="_blank" rel="noreferrer">
             <img src={item.url} alt={item.filename} loading="lazy" />
           </a>
           <div className="file-caption">{item.filename} ({formatBytes(item.size || 0)})</div>
-        </article>
+        </>
       );
     }
     return (
-      <article className={`message ${mine ? "mine" : ""}`}>
+      <>
         <div className="meta"><strong>{mine ? "You" : item.sender}</strong><span>{item.time}</span></div>
         <a className="file-link" href={item.url} target="_blank" rel="noreferrer">{item.filename}</a>
-      </article>
+      </>
     );
   }
   return (
-    <article className={`message ${mine ? "mine" : ""}`}>
+    <>
       <div className="meta"><strong>{mine ? "You" : item.sender}</strong><span>{item.time}</span></div>
       <div>{item.text}</div>
-    </article>
+    </>
   );
 }
 

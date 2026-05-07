@@ -116,12 +116,22 @@ button.secondary-btn:hover,
   width: 38px;
   height: 38px;
   font-size: 14px;
+  overflow: hidden;
 }
 
 .avatar.large {
   width: 46px;
   height: 46px;
   font-size: 15px;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.photo-avatar {
+  background: #dfe5e7;
 }
 
 h1,
@@ -320,6 +330,23 @@ h2 {
   background: #e5edf7;
   color: var(--ink);
   text-align: center;
+}
+
+.profile-photo-action {
+  display: inline-grid;
+  place-items: center;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #e7f8f3;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.profile-photo-action input {
+  display: none;
 }
 
 .profile-copy {
@@ -627,6 +654,38 @@ h2 {
   align-self: flex-end;
   border-radius: 8px 8px 2px 8px;
   background: var(--bubble-mine);
+}
+
+.message.group-peer-message {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  max-width: min(720px, 86%);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message.group-peer-message .message-body {
+  min-width: 0;
+  border-radius: 8px 8px 8px 2px;
+  padding: 8px 10px;
+  background: var(--bubble);
+  box-shadow: 0 1px 1px rgba(17, 27, 33, 0.14);
+}
+
+.message-avatar-slot {
+  display: grid;
+  place-items: end center;
+  width: 34px;
+  min-width: 34px;
+}
+
+.message-avatar-slot .avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
 }
 
 .message.system {
@@ -982,6 +1041,23 @@ h2 {
     max-width: 92%;
   }
 
+  .message.group-peer-message {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 7px;
+    max-width: 96%;
+  }
+
+  .message-avatar-slot {
+    width: 30px;
+    min-width: 30px;
+  }
+
+  .message-avatar-slot .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 10px;
+  }
+
   .typing-line {
     padding-inline: 14px;
   }
@@ -1144,6 +1220,16 @@ textarea {
 
 .message {
   max-width: min(620px, 74%);
+  border-radius: 8px;
+  padding: 7px 10px 8px;
+}
+
+.message.group-peer-message {
+  max-width: min(680px, 82%);
+  padding: 0;
+}
+
+.message.group-peer-message .message-body {
   border-radius: 8px;
   padding: 7px 10px 8px;
 }
@@ -1510,6 +1596,15 @@ textarea:focus {
 
   .message {
     max-width: 92%;
+    padding: 7px 9px;
+  }
+
+  .message.group-peer-message {
+    max-width: 96%;
+    padding: 0;
+  }
+
+  .message.group-peer-message .message-body {
     padding: 7px 9px;
   }
 

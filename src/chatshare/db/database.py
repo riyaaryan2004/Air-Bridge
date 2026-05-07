@@ -37,10 +37,15 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 username TEXT PRIMARY KEY,
                 password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                profile_photo TEXT
             )
             """
         )
+        cursor.execute("PRAGMA table_info(users)")
+        user_columns = {row["name"] for row in cursor.fetchall()}
+        if "profile_photo" not in user_columns:
+            cursor.execute("ALTER TABLE users ADD COLUMN profile_photo TEXT")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -195,6 +200,40 @@ def get_user_by_token(token: Optional[str]) -> Optional[str]:
             conn.commit()
             return None
         return row["username"]
+
+
+def get_user_profile(username: str) -> dict:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, profile_photo FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+    if row is None:
+        return {"username": username, "profile_photo": ""}
+    return {"username": row["username"], "profile_photo": row["profile_photo"] or ""}
+
+
+def update_user_profile_photo(username: str, photo_url: str) -> None:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET profile_photo = ? WHERE username = ?",
+            (photo_url, username),
+        )
+        conn.commit()
+
+
+def get_profile_photos(cursor: sqlite3.Cursor, usernames: list[str]) -> dict[str, str]:
+    names = sorted({name for name in usernames if name})
+    if not names:
+        return {}
+    placeholders = ",".join("?" for _ in names)
+    cursor.execute(
+        f"SELECT username, profile_photo FROM users WHERE username IN ({placeholders})",
+        names,
+    )
+    return {row["username"]: row["profile_photo"] or "" for row in cursor.fetchall()}
 
 
 def get_room_history(room: str, limit: int = 100) -> list[dict]:
@@ -491,6 +530,7 @@ def get_user_rooms(username: str) -> list[dict]:
                 (row["room_id"],),
             )
             members = [member_row["username"] for member_row in cursor.fetchall()]
+            member_photos = get_profile_photos(cursor, members)
             cursor.execute(
                 "SELECT id, sender, message, time, message_type, kind, filename FROM messages WHERE room = ? ORDER BY id DESC LIMIT 1",
                 (row["room_id"],),
@@ -517,7 +557,9 @@ def get_user_rooms(username: str) -> list[dict]:
                     "is_owner": row["created_by"] == username,
                     "is_group": is_group,
                     "peer": peer,
+                    "peer_photo": member_photos.get(peer or "", ""),
                     "members": members,
+                    "member_photos": member_photos,
                     "last_message_id": last_message["id"] if last_message else 0,
                     "last_message_sender": last_message["sender"] if last_message else "",
                     "last_message": last_message_text,
@@ -660,10 +702,10 @@ def search_users(query: str, current_user: str) -> list[dict]:
         cursor = conn.cursor()
         like_query = f"{query}%"
         cursor.execute(
-            "SELECT username FROM users WHERE username LIKE ? AND username != ? ORDER BY username LIMIT 20",
+            "SELECT username, profile_photo FROM users WHERE username LIKE ? AND username != ? ORDER BY username LIMIT 20",
             (like_query, current_user),
         )
-        matches = [row["username"] for row in cursor.fetchall()]
+        matches = cursor.fetchall()
         cursor.execute(
             "SELECT requestor, target, status FROM friends WHERE requestor = ? OR target = ?",
             (current_user, current_user),
@@ -680,8 +722,12 @@ def search_users(query: str, current_user: str) -> list[dict]:
             else:
                 status_map[row["requestor"]] = "incoming"
     return [
-        {"username": username, "status": status_map.get(username, "none")}
-        for username in matches
+        {
+            "username": row["username"],
+            "profile_photo": row["profile_photo"] or "",
+            "status": status_map.get(row["username"], "none"),
+        }
+        for row in matches
     ]
 
 
@@ -739,6 +785,7 @@ def get_friend_data(username: str) -> dict:
             (username, "pending"),
         )
         outgoing_invite = [dict(row) for row in cursor.fetchall()]
+        photo_names = [username]
     friends = []
     incoming = []
     outgoing = []
@@ -746,12 +793,24 @@ def get_friend_data(username: str) -> dict:
         if row["status"] == "accepted":
             friend = row["target"] if row["requestor"] == username else row["requestor"]
             friends.append(friend)
+            photo_names.append(friend)
         elif row["status"] == "pending":
             if row["requestor"] == username:
                 outgoing.append(row["target"])
+                photo_names.append(row["target"])
             else:
                 incoming.append(row["requestor"])
+                photo_names.append(row["requestor"])
+    for item in incoming_join + outgoing_join:
+        photo_names.append(item.get("requestor", ""))
+    for item in incoming_invite + outgoing_invite:
+        photo_names.extend([item.get("inviter", ""), item.get("target", "")])
+    with DB_LOCK:
+        cursor = conn.cursor()
+        profile_photos = get_profile_photos(cursor, photo_names)
     return {
+        "profile_photo": profile_photos.get(username, ""),
+        "profile_photos": profile_photos,
         "friends": sorted(friends),
         "incoming": sorted(incoming),
         "outgoing": sorted(outgoing),

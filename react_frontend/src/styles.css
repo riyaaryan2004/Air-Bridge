@@ -89,6 +89,13 @@ h3 {
 .brand-mark { width: 52px; height: 52px; border-radius: 12px; }
 .avatar { width: 38px; height: 38px; font-size: 14px; }
 .avatar.large { width: 72px; height: 72px; font-size: 22px; }
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.photo-avatar { background: #dfe5e7; }
 .join-form { display: grid; gap: 14px; }
 .join-form label { display: grid; gap: 7px; font-weight: 800; }
 .join-form button, .people > button { min-height: 42px; }
@@ -262,6 +269,34 @@ h3 {
   overflow-wrap: anywhere;
 }
 .message.mine { align-self: flex-end; background: var(--primary-soft); }
+.message.group-peer-message {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  max-width: min(680px, 82%);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.message.group-peer-message .message-body {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 1px rgba(17, 27, 33, 0.14);
+}
+.message-avatar-slot {
+  display: grid;
+  place-items: end center;
+  width: 34px;
+  min-width: 34px;
+}
+.message-avatar-slot .avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 11px;
+}
 .message.system {
   align-self: center;
   background: rgba(255, 255, 255, 0.8);
@@ -542,6 +577,24 @@ h3 {
   .message {
     max-width: 92%;
     padding: 7px 9px;
+  }
+  .message.group-peer-message {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 7px;
+    max-width: 96%;
+    padding: 0;
+  }
+  .message.group-peer-message .message-body {
+    padding: 7px 9px;
+  }
+  .message-avatar-slot {
+    width: 30px;
+    min-width: 30px;
+  }
+  .message-avatar-slot .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 10px;
   }
   .meta {
     gap: 10px;

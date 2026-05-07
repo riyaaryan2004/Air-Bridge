@@ -24,6 +24,7 @@ from .db.database import (
     get_friend_data,
     get_or_create_direct_room,
     get_room_history,
+    get_user_profile,
     get_user_by_token,
     get_user_rooms,
     init_db,
@@ -39,12 +40,15 @@ from .db.database import (
     search_users,
     send_friend_request,
     update_group_description,
+    update_user_profile_photo,
     user_in_room,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = ROOT / "web"
 UPLOAD_DIR = ROOT / "web_uploads"
+PROFILE_PHOTO_DIR = UPLOAD_DIR / "profile_photos"
+MAX_PROFILE_PHOTO_SIZE = 5 * 1024 * 1024
 WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 mimetypes.add_type("audio/webm", ".webm")
 mimetypes.add_type("audio/ogg", ".ogg")
@@ -234,7 +238,7 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             if not username:
                 self.send_error(HTTPStatus.UNAUTHORIZED)
                 return
-            self.send_json({"username": username})
+            self.send_json(get_user_profile(username))
         elif parsed.path == "/api/users":
             username = get_auth_user(self)
             if not username:
@@ -272,6 +276,8 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             self.send_json({"room": room, "messages": get_room_history(room)})
         elif parsed.path.startswith("/files/"):
             self.serve_uploaded_file(parsed.path.removeprefix("/files/"))
+        elif parsed.path.startswith("/profile-photos/"):
+            self.serve_profile_photo(parsed.path.removeprefix("/profile-photos/"))
         else:
             self.serve_static(parsed.path)
 
@@ -339,6 +345,36 @@ class ChatWebHandler(BaseHTTPRequestHandler):
                 return
             delete_account(username)
             self.send_json({"ok": True})
+            return
+        if parsed.path == "/api/profile/photo":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            content_type = self.headers.get("Content-Type", "")
+            size = int(self.headers.get("Content-Length", "0"))
+            if not content_type.startswith("image/") or size <= 0:
+                self.send_json({"ok": False, "error": "Choose an image file"})
+                return
+            if size > MAX_PROFILE_PHOTO_SIZE:
+                self.send_json({"ok": False, "error": "Profile photo must be 5 MB or smaller"})
+                return
+            extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip()) or ".jpg"
+            if extension == ".jpe":
+                extension = ".jpg"
+            filename = safe_filename(f"{username}_profile{extension}")
+            output_path = unique_path(PROFILE_PHOTO_DIR, filename)
+            remaining = size
+            with output_path.open("wb") as file:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    file.write(chunk)
+                    remaining -= len(chunk)
+            photo_url = f"/profile-photos/{urllib.parse.quote(output_path.name)}"
+            update_user_profile_photo(username, photo_url)
+            self.send_json({"ok": True, "profile_photo": photo_url})
             return
         if parsed.path == "/api/rooms":
             username = get_auth_user(self)
@@ -658,6 +694,28 @@ class ChatWebHandler(BaseHTTPRequestHandler):
                     break
                 self.wfile.write(chunk)
 
+    def serve_profile_photo(self, filename: str) -> None:
+        safe_name = safe_filename(urllib.parse.unquote(filename))
+        file_path = (PROFILE_PHOTO_DIR / safe_name).resolve()
+        if PROFILE_PHOTO_DIR.resolve() not in file_path.parents and file_path != PROFILE_PHOTO_DIR.resolve():
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        if not file_path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        self.send_response(HTTPStatus.OK)
+        content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(file_path.stat().st_size))
+        self.end_headers()
+        with file_path.open("rb") as file:
+            while True:
+                chunk = file.read(64 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
     def send_json(self, payload: dict) -> None:
         data = json.dumps(payload).encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -677,6 +735,7 @@ def main() -> None:
     args = parser.parse_args()
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    PROFILE_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
     server = ThreadingHTTPServer((args.host, args.port), ChatWebHandler)
     ip = local_ip() if args.host in ("0.0.0.0", "") else args.host

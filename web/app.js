@@ -41,6 +41,7 @@ const profileName = document.querySelector("#profileName");
 const profileStatus = document.querySelector("#profileStatus");
 const profilePanelAvatar = document.querySelector("#profilePanelAvatar");
 const profilePanelName = document.querySelector("#profilePanelName");
+const profilePhotoInput = document.querySelector("#profilePhotoInput");
 const profileRequestCount = document.querySelector("#profileRequestCount");
 const profileFriendsCount = document.querySelector("#profileFriendsCount");
 const roomAvatar = document.querySelector("#roomAvatar");
@@ -87,6 +88,8 @@ let isRecordingVoice = false;
 let cachedFriends = [];
 let cachedRooms = [];
 let cachedOutgoingInvites = [];
+let profilePhoto = "";
+let profilePhotos = {};
 let currentRoomMeta = null;
 let addMembersOpen = false;
 let pendingRequestCount = 0;
@@ -224,6 +227,14 @@ voiceFallbackInput.addEventListener("change", () => {
   voiceFallbackInput.value = "";
 });
 
+profilePhotoInput.addEventListener("change", async () => {
+  const [file] = profilePhotoInput.files;
+  if (file) {
+    await uploadProfilePhoto(file);
+  }
+  profilePhotoInput.value = "";
+});
+
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
   const query = searchInput.value.trim();
@@ -308,6 +319,8 @@ function resetSession(notice = "") {
   cachedFriends = [];
   cachedRooms = [];
   cachedOutgoingInvites = [];
+  profilePhoto = "";
+  profilePhotos = {};
   currentRoomMeta = null;
   addMembersOpen = false;
   pendingRequestCount = 0;
@@ -367,6 +380,10 @@ async function refreshRooms(selectedRoomId) {
     const data = await response.json();
     const rooms = data.rooms || [];
     cachedRooms = rooms;
+    rooms.forEach((item) => {
+      profilePhotos = { ...profilePhotos, ...(item.member_photos || {}) };
+      if (item.peer && item.peer_photo) profilePhotos[item.peer] = item.peer_photo;
+    });
     updateUnreadFromRooms(rooms);
     renderRooms(rooms);
     const activeRoom = rooms.find((item) => item.room_id === room);
@@ -404,7 +421,7 @@ function renderRooms(rooms) {
     entry.className = `user-chip room-chip${current ? " active" : ""}${unreadCount > 0 ? " unread" : ""}`;
     entry.dataset.room = item.room_id;
     entry.innerHTML = `
-      <span class="avatar">${getInitials(displayTitle)}</span>
+      ${avatarHtml(item.peer || displayTitle, item.peer_photo || "")}
       <div class="room-copy">
         <span class="room-name">${escapeHtml(displayTitle)}</span>
         <small>${escapeHtml(getRoomPreview(item))}</small>
@@ -496,6 +513,9 @@ async function refreshFriendData() {
     const response = await fetch(`/api/friends?token=${encodeURIComponent(token)}`);
     const data = await response.json();
     if (data) {
+      profilePhoto = data.profile_photo || profilePhoto || "";
+      profilePhotos = { ...profilePhotos, ...(data.profile_photos || {}), [username]: profilePhoto };
+      updateProfile();
       cachedFriends = data.friends || [];
       cachedOutgoingInvites = data.outgoing_invite || [];
       renderFriends(cachedFriends);
@@ -617,7 +637,7 @@ function addMessage({ sender, text, time, mine }) {
     <div class="meta"><strong>${escapeHtml(mine ? "You" : sender)}</strong><span>${escapeHtml(time || "")}</span></div>
     <div class="text">${escapeHtml(text)}</div>
   `;
-  messages.appendChild(item);
+  appendMessageItem(item, { sender, mine });
   scrollMessages();
 }
 
@@ -641,7 +661,7 @@ function addFileMessage(data) {
       </div>
     `;
     wireVoicePlayer(item.querySelector(".voice-note"));
-    messages.appendChild(item);
+    appendMessageItem(item, { sender: data.sender, mine });
     scrollMessages();
     return;
   }
@@ -653,7 +673,7 @@ function addFileMessage(data) {
       </a>
       <div class="file-caption">${escapeHtml(data.filename)} (${formatBytes(data.size || 0)})</div>
     `;
-    messages.appendChild(item);
+    appendMessageItem(item, { sender: data.sender, mine });
     scrollMessages();
     return;
   }
@@ -665,8 +685,36 @@ function addFileMessage(data) {
       <small>${formatBytes(data.size || 0)}</small>
     </a>
   `;
-  messages.appendChild(item);
+  appendMessageItem(item, { sender: data.sender, mine });
   scrollMessages();
+}
+
+function appendMessageItem(item, { sender, mine }) {
+  const isGroupPeerMessage = Boolean(currentRoomMeta?.is_group && sender && !mine);
+  if (!isGroupPeerMessage) {
+    messages.appendChild(item);
+    return;
+  }
+
+  const previous = messages.lastElementChild;
+  const startsSenderRun = !(previous?.classList.contains("group-peer-message") && previous.dataset.sender === sender);
+  const body = document.createElement("div");
+  body.className = "message-body";
+  while (item.firstChild) {
+    body.appendChild(item.firstChild);
+  }
+
+  const avatarSlot = document.createElement("span");
+  avatarSlot.className = "message-avatar-slot";
+  avatarSlot.setAttribute("aria-hidden", "true");
+  if (startsSenderRun) {
+    avatarSlot.innerHTML = avatarHtml(sender);
+  }
+
+  item.dataset.sender = sender;
+  item.classList.add("group-peer-message", startsSenderRun ? "with-avatar" : "continued");
+  item.append(avatarSlot, body);
+  messages.appendChild(item);
 }
 
 function wireVoicePlayer(container) {
@@ -726,7 +774,7 @@ function renderUsers(users) {
   users.forEach((name) => {
     const item = document.createElement("div");
     item.className = "user-chip";
-    item.innerHTML = `<span class="dot"></span><span>${escapeHtml(name)}</span>`;
+    item.innerHTML = `${avatarHtml(name)}<span class="dot"></span><span>${escapeHtml(name)}</span>`;
     usersList.appendChild(item);
   });
 }
@@ -745,7 +793,7 @@ function renderFriends(friends) {
     const item = document.createElement("div");
     item.className = "user-chip";
     item.innerHTML = `
-      <span class="avatar">${getInitials(name)}</span><span style="flex: 1;">${escapeHtml(name)}</span>
+      ${avatarHtml(name)}<span style="flex: 1;">${escapeHtml(name)}</span>
       ${canAddToGroup ? `<button type="button" data-add-friend="${escapeAttribute(name)}">Add</button>` : ""}
       <button type="button" data-friend="${escapeHtml(name)}">Chat</button>
       <button type="button" data-remove-friend="${escapeAttribute(name)}" class="secondary-btn">Unfriend</button>
@@ -787,7 +835,7 @@ function renderRoomInfo() {
   const members = getRoomMembers(currentRoomMeta);
   const isGroup = Boolean(currentRoomMeta.is_group);
   infoTitle.textContent = isGroup ? "Group Info" : "Contact Info";
-  infoAvatar.textContent = getInitials(title);
+  renderAvatar(infoAvatar, title, isGroup ? "" : currentRoomMeta.peer_photo || "");
   infoName.textContent = title;
   infoMeta.textContent = isGroup ? `${members.length} members` : "Direct chat";
   infoMembersCount.textContent = members.length;
@@ -796,7 +844,7 @@ function renderRoomInfo() {
     const item = document.createElement("div");
     item.className = "user-chip member-chip";
     item.innerHTML = `
-      <span class="avatar">${getInitials(member)}</span>
+      ${avatarHtml(member)}
       <span style="flex: 1;">${escapeHtml(member)}</span>
       ${member === username ? `<span class="room-kind">You</span>` : ""}
     `;
@@ -834,7 +882,7 @@ function renderInfoAddMembers() {
     const item = document.createElement("div");
     item.className = "user-chip";
     item.innerHTML = `
-      <span class="avatar">${getInitials(friend)}</span>
+      ${avatarHtml(friend)}
       <span style="flex: 1;">${escapeHtml(friend)}</span>
       <button type="button" data-add-friend="${escapeAttribute(friend)}" ${pending ? "disabled" : ""}>${pending ? "Pending" : "Add"}</button>
     `;
@@ -1265,7 +1313,7 @@ function renderSearchResults(users) {
       status = "Incoming";
     }
     item.innerHTML = `
-      <span class="avatar">${getInitials(user.username)}</span>
+      ${avatarHtml(user.username, user.profile_photo || "")}
       <div style="flex: 1;">
         <div style="font-weight: 700;">${escapeHtml(user.username)}</div>
         <div style="font-size: 12px; color: var(--muted);">${status}</div>
@@ -1391,6 +1439,37 @@ async function uploadFiles(files) {
   }
 }
 
+async function uploadProfilePhoto(file) {
+  if (!token || !file.type.startsWith("image/")) {
+    addSystem("Choose an image file for your profile photo.");
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    addSystem("Profile photo must be 5 MB or smaller.");
+    return;
+  }
+  try {
+    const response = await fetch(`/api/profile/photo?token=${encodeURIComponent(token)}`, {
+      method: "POST",
+      headers: { "Content-Type": file.type || "image/jpeg" },
+      body: file,
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      addSystem(data.error || "Could not update profile photo.");
+      return;
+    }
+    profilePhoto = data.profile_photo || "";
+    profilePhotos[username] = profilePhoto;
+    updateProfile();
+    await refreshFriendData();
+    await refreshRooms(room);
+    addSystem("Profile photo updated.");
+  } catch (error) {
+    addSystem("Could not upload profile photo.");
+  }
+}
+
 function uploadFile(file, options = {}) {
   return new Promise((resolve) => {
     if (!token || !room) {
@@ -1481,15 +1560,16 @@ function setStatus(text, online) {
 
 function updateProfile() {
   profileName.textContent = username || "Guest";
-  profileAvatar.textContent = getInitials(username || "AIR Bridge");
+  renderAvatar(profileAvatar, username || "AIR Bridge", profilePhoto);
   profilePanelName.textContent = username || "Guest";
-  profilePanelAvatar.textContent = getInitials(username || "AIR Bridge");
+  renderAvatar(profilePanelAvatar, username || "AIR Bridge", profilePhoto);
   profileStatus.textContent = username ? "Ready to connect" : "Signed out";
 }
 
 function updateRoomHeader(title) {
   roomTitle.textContent = title;
-  roomAvatar.textContent = title === "Select a conversation" ? "#" : getInitials(title);
+  const photo = currentRoomMeta && !currentRoomMeta.is_group ? currentRoomMeta.peer_photo : "";
+  renderAvatar(roomAvatar, title === "Select a conversation" ? "#" : title, photo);
 }
 
 function syncLayoutState() {
@@ -1536,6 +1616,28 @@ function getInitials(value) {
     .slice(0, 2)
     .map((part) => part[0].toUpperCase())
     .join("") || "AB";
+}
+
+function avatarHtml(name, explicitPhoto = "") {
+  const photo = explicitPhoto || profilePhotos[name] || "";
+  if (photo) {
+    return `<span class="avatar photo-avatar"><img src="${escapeAttribute(photo)}" alt="${escapeAttribute(name)}" loading="lazy" /></span>`;
+  }
+  return `<span class="avatar">${getInitials(name)}</span>`;
+}
+
+function renderAvatar(element, name, photo = "") {
+  element.textContent = "";
+  element.classList.toggle("photo-avatar", Boolean(photo));
+  if (!photo) {
+    element.textContent = getInitials(name);
+    return;
+  }
+  const image = document.createElement("img");
+  image.src = photo;
+  image.alt = name;
+  image.loading = "lazy";
+  element.appendChild(image);
 }
 
 function scrollMessages() {
