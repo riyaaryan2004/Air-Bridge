@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ChatShare LAN</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="join-panel" id="joinPanel">
+        <div class="brand">
+          <div class="brand-mark">CS</div>
+          <div>
+            <h1>ChatShare LAN</h1>
+            <p>Offline room chat and file sharing</p>
+          </div>
+        </div>
+
+        <form id="joinForm" class="join-form">
+          <label>
+            <span>Username</span>
+            <input id="usernameInput" autocomplete="name" maxlength="24" required />
+          </label>
+          <label>
+            <span>Room</span>
+            <input id="roomInput" value="lab" maxlength="32" required />
+          </label>
+          <button type="submit">Join Room</button>
+        </form>
+      </section>
+
+      <section class="chat-panel hidden" id="chatPanel">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">Room</div>
+            <h2 id="roomTitle">lab</h2>
+          </div>
+          <div class="status" id="connectionStatus">Connecting</div>
+        </header>
+
+        <aside class="people">
+          <div class="aside-title">Online</div>
+          <div id="usersList" class="users-list"></div>
+        </aside>
+
+        <section class="conversation">
+          <div id="messages" class="messages"></div>
+          <div id="typingLine" class="typing-line"></div>
+          <form id="messageForm" class="composer">
+            <label class="file-btn" title="Share file">
+              <input id="fileInput" type="file" multiple />
+              <span>Files</span>
+            </label>
+            <label class="file-btn" title="Share folder">
+              <input id="folderInput" type="file" multiple webkitdirectory />
+              <span>Folder</span>
+            </label>
+            <input id="messageInput" placeholder="Message" autocomplete="off" />
+            <button type="submit">Send</button>
+          </form>
+          <div id="uploadProgress" class="upload-progress hidden">
+            <div id="uploadBar"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

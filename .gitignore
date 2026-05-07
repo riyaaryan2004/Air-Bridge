@@ -1,0 +1,9 @@
+.vscode/
+myenv/
+*.pyc
+__pycache__/
+.pytest_cache/
+downloads/*
+!downloads/.gitkeep
+web_uploads/*
+!web_uploads/.gitkeep
