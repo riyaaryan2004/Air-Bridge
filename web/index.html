@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>AIR-Bridge</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -35,39 +35,26 @@
       <section class="chat-panel hidden" id="chatPanel">
         <aside class="people">
           <div class="profile-card">
-            <div class="avatar large" id="profileAvatar">AB</div>
-            <div class="profile-copy">
-              <div id="profileName" class="profile-name">Guest</div>
-              <div class="profile-subtitle">
-                <span class="presence-dot"></span>
-                <span id="profileStatus">Ready to connect</span>
+            <button id="profileButton" type="button" class="profile-main" title="Open profile">
+              <div class="avatar large" id="profileAvatar">AB</div>
+              <div class="profile-copy">
+                <div id="profileName" class="profile-name">Guest</div>
+                <div class="profile-subtitle">
+                  <span class="presence-dot"></span>
+                  <span id="profileStatus">Ready to connect</span>
+                </div>
               </div>
-            </div>
+            </button>
+            <button id="notificationButton" type="button" class="notify-button" title="Pending requests">
+              <span aria-hidden="true">!</span>
+              <strong id="notificationCount">0</strong>
+            </button>
+            <button id="chatNotificationButton" type="button" class="notify-button chat-notify" title="Unread messages">
+              <span aria-hidden="true">&#128276;</span>
+              <strong id="chatNotificationCount">0</strong>
+            </button>
             <button id="logoutButton" type="button" class="icon-button" title="Logout">Logout</button>
-            <div class="profile-stats">
-              <span>Friends</span>
-              <strong id="friendsCount">0</strong>
-            </div>
           </div>
-
-          <div class="aside-title">Search Users</div>
-          <div class="search-row">
-            <input id="searchInput" placeholder="username..." autocomplete="off" />
-            <button id="searchButton" type="button">Search</button>
-          </div>
-          <div id="searchResults" class="users-list"></div>
-
-          <div class="section-heading">
-            <span>Online Now</span>
-            <span id="onlineCount" class="count-pill">0</span>
-          </div>
-          <div id="usersList" class="users-list"></div>
-
-          <div class="aside-title">Requests</div>
-          <div id="requestsList" class="users-list"></div>
-
-          <div class="aside-title">Friends</div>
-          <div id="friendsList" class="users-list"></div>
 
           <div class="aside-title">Conversations</div>
           <div id="roomsList" class="users-list"></div>
@@ -86,15 +73,63 @@
           <button id="joinRoomButton" type="button">Join</button>
         </aside>
 
+        <aside id="profilePanel" class="info-panel hidden">
+          <div class="info-head">
+            <button id="closeProfilePanel" type="button" class="icon-button" title="Close">Close</button>
+            <div>
+              <div class="eyebrow">Profile</div>
+              <h3>People</h3>
+            </div>
+          </div>
+          <div class="info-profile">
+            <div class="avatar large" id="profilePanelAvatar">AB</div>
+            <strong id="profilePanelName">Guest</strong>
+            <span><span id="friendsCount">0</span> friends</span>
+          </div>
+          <div class="info-section">
+            <div class="aside-title">Search Users</div>
+            <div class="search-row">
+              <input id="searchInput" placeholder="username..." autocomplete="off" />
+              <button id="searchButton" type="button">Search</button>
+            </div>
+            <div id="searchResults" class="users-list"></div>
+          </div>
+          <div class="info-section">
+            <div class="section-heading">
+              <span>Requests</span>
+              <span id="profileRequestCount" class="count-pill">0</span>
+            </div>
+            <div id="requestsList" class="users-list"></div>
+          </div>
+          <div class="info-section">
+            <div class="section-heading">
+              <span>Friends</span>
+              <span id="profileFriendsCount" class="count-pill">0</span>
+            </div>
+            <div id="friendsList" class="users-list"></div>
+          </div>
+          <div class="info-section">
+            <div class="section-heading">
+              <span>Online Now</span>
+              <span id="onlineCount" class="count-pill">0</span>
+            </div>
+            <div id="usersList" class="users-list"></div>
+          </div>
+          <div class="info-section danger-section">
+            <button id="deleteAccountButton" type="button" class="danger-button">Delete Account</button>
+          </div>
+        </aside>
+
         <section class="conversation">
           <header class="topbar">
-            <div class="conversation-heading">
+            <button id="mobileChatsButton" type="button" class="mobile-chats-button" title="Open conversations">Chats</button>
+            <button id="roomInfoButton" type="button" class="conversation-heading" title="Open conversation info">
               <div class="avatar" id="roomAvatar">#</div>
               <div>
                 <div class="eyebrow">Conversation</div>
                 <h2 id="roomTitle">Select a conversation</h2>
               </div>
-            </div>
+            </button>
             <div class="status" id="connectionStatus">Offline</div>
           </header>
 
@@ -119,6 +154,41 @@
             <div id="uploadBar"></div>
           </div>
         </section>
+
+        <aside id="roomInfoPanel" class="info-panel hidden">
+          <div class="info-head">
+            <button id="closeInfoPanel" type="button" class="icon-button" title="Close">Close</button>
+            <div>
+              <div class="eyebrow">Details</div>
+              <h3 id="infoTitle">Conversation</h3>
+            </div>
+          </div>
+          <div class="info-profile">
+            <div class="avatar large" id="infoAvatar">#</div>
+            <strong id="infoName">Select a conversation</strong>
+            <span id="infoMeta">No room selected</span>
+          </div>
+          <div id="groupInfoControls" class="info-section hidden">
+            <div class="aside-title">Group Description</div>
+            <textarea id="groupDescriptionInput" maxlength="300" placeholder="Add group description"></textarea>
+            <button id="saveDescriptionButton" type="button">Save Description</button>
+            <button id="shareGroupButton" type="button" class="wide-action">Copy Group Link</button>
+          </div>
+          <div class="info-section">
+            <div class="section-heading">
+              <span>Members</span>
+              <span id="infoMembersCount" class="count-pill">0</span>
+            </div>
+            <div id="infoMembersList" class="users-list"></div>
+          </div>
+          <div id="infoAddMembers" class="info-section hidden">
+            <button id="showAddMembersButton" type="button" class="wide-action">Add Members</button>
+            <div id="infoAddMembersList" class="users-list hidden"></div>
+          </div>
+          <div id="roomDangerControls" class="info-section danger-section hidden">
+            <button id="deleteRoomButton" type="button" class="danger-button">Delete Group</button>
+          </div>
+        </aside>
       </section>
     </main>
 
