@@ -89,6 +89,18 @@ def init_db() -> None:
             )
             """
         )
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = {row["name"] for row in cursor.fetchall()}
+        if "message_type" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'chat'")
+        if "kind" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN kind TEXT")
+        if "filename" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN filename TEXT")
+        if "size" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN size INTEGER NOT NULL DEFAULT 0")
+        if "url" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN url TEXT")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS friends (
@@ -105,18 +117,46 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS rooms (
                 room_id TEXT PRIMARY KEY,
                 title TEXT,
+                description TEXT,
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 is_group INTEGER NOT NULL
             )
             """
         )
+        cursor.execute("PRAGMA table_info(rooms)")
+        room_columns = {row["name"] for row in cursor.fetchall()}
+        if "description" not in room_columns:
+            cursor.execute("ALTER TABLE rooms ADD COLUMN description TEXT")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS room_members (
                 room_id TEXT NOT NULL,
                 username TEXT NOT NULL,
                 PRIMARY KEY (room_id, username)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS room_join_requests (
+                room_id TEXT NOT NULL,
+                requestor TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (room_id, requestor)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS room_member_invites (
+                room_id TEXT NOT NULL,
+                inviter TEXT NOT NULL,
+                target TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (room_id, target)
             )
             """
         )
@@ -190,14 +230,33 @@ def get_room_history(room: str, limit: int = 100) -> list[dict]:
     with DB_LOCK:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT sender, message, time FROM messages WHERE room = ? ORDER BY id DESC LIMIT ?",
+            "SELECT id, sender, message, time, message_type, kind, filename, size, url FROM messages WHERE room = ? ORDER BY id DESC LIMIT ?",
             (room, limit),
         )
         rows = cursor.fetchall()
-    return [dict(sender=row["sender"], message=row["message"], time=row["time"]) for row in reversed(rows)]
+    history = []
+    for row in reversed(rows):
+        item = {
+            "id": row["id"],
+            "type": row["message_type"] or "chat",
+            "sender": row["sender"],
+            "message": row["message"],
+            "time": row["time"],
+        }
+        if item["type"] == "file":
+            item.update(
+                {
+                    "kind": row["kind"] or "file",
+                    "filename": row["filename"] or row["message"],
+                    "size": int(row["size"] or 0),
+                    "url": row["url"] or "",
+                }
+            )
+        history.append(item)
+    return history
 
 
-def save_message(room: str, sender: str, message: str) -> None:
+def save_message(room: str, sender: str, message: str) -> int:
     conn = db_connect()
     with DB_LOCK:
         cursor = conn.cursor()
@@ -205,7 +264,35 @@ def save_message(room: str, sender: str, message: str) -> None:
             "INSERT INTO messages (room, sender, message, time) VALUES (?, ?, ?, ?)",
             (room, sender, message, now_text()),
         )
+        message_id = cursor.lastrowid
         conn.commit()
+    return int(message_id)
+
+
+def save_file_message(room: str, payload: dict) -> int:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO messages (room, sender, message, time, message_type, kind, filename, size, url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                room,
+                str(payload.get("sender", "")),
+                str(payload.get("filename", "shared_file")),
+                str(payload.get("time", now_text())),
+                "file",
+                str(payload.get("kind", "file")),
+                str(payload.get("filename", "shared_file")),
+                int(payload.get("size", 0) or 0),
+                str(payload.get("url", "")),
+            ),
+        )
+        message_id = cursor.lastrowid
+        conn.commit()
+    return int(message_id)
 
 
 def friendship_accepted(cursor: sqlite3.Cursor, user1: str, user2: str) -> bool:
@@ -226,8 +313,8 @@ def create_room(title: str, owner: str, is_group: bool = True, members: Optional
             if cursor.fetchone() is None:
                 break
         cursor.execute(
-            "INSERT INTO rooms (room_id, title, created_by, created_at, is_group) VALUES (?, ?, ?, ?, ?)",
-            (room_id, title.strip() or None, owner, datetime.utcnow().isoformat(), 1 if is_group else 0),
+            "INSERT INTO rooms (room_id, title, description, created_by, created_at, is_group) VALUES (?, ?, ?, ?, ?, ?)",
+            (room_id, title.strip() or None, "", owner, datetime.utcnow().isoformat(), 1 if is_group else 0),
         )
         cursor.execute(
             "INSERT OR IGNORE INTO room_members (room_id, username) VALUES (?, ?)",
@@ -260,7 +347,68 @@ def add_room_member(room_id: str, username: str) -> bool:
     return True
 
 
-def add_friend_to_group(room_id: str, actor: str, target: str) -> tuple[bool, str]:
+def request_room_join(room_id: str, requestor: str) -> tuple[bool, str, bool]:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_group FROM rooms WHERE room_id = ?", (room_id,))
+        room_row = cursor.fetchone()
+        if room_row is None:
+            return False, "Room not found", False
+        cursor.execute(
+            "SELECT 1 FROM room_members WHERE room_id = ? AND username = ?",
+            (room_id, requestor),
+        )
+        if cursor.fetchone() is not None:
+            return True, "", False
+        if not bool(room_row["is_group"]):
+            return False, "Direct chats cannot be joined by ID", False
+        cursor.execute(
+            "SELECT status FROM room_join_requests WHERE room_id = ? AND requestor = ?",
+            (room_id, requestor),
+        )
+        row = cursor.fetchone()
+        if row is not None and row["status"] == "pending":
+            return True, "Join request already pending", True
+        cursor.execute(
+            "INSERT OR REPLACE INTO room_join_requests (room_id, requestor, status, created_at) VALUES (?, ?, ?, ?)",
+            (room_id, requestor, "pending", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    return True, "Join request sent", True
+
+
+def respond_room_join_request(room_id: str, actor: str, requestor: str, accept: bool) -> tuple[bool, str]:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM room_members WHERE room_id = ? AND username = ?",
+            (room_id, actor),
+        )
+        if cursor.fetchone() is None:
+            return False, "You are not a member of this room"
+        cursor.execute(
+            "SELECT status FROM room_join_requests WHERE room_id = ? AND requestor = ?",
+            (room_id, requestor),
+        )
+        row = cursor.fetchone()
+        if row is None or row["status"] != "pending":
+            return False, "Join request not found"
+        if accept:
+            cursor.execute(
+                "INSERT OR IGNORE INTO room_members (room_id, username) VALUES (?, ?)",
+                (room_id, requestor),
+            )
+        cursor.execute(
+            "DELETE FROM room_join_requests WHERE room_id = ? AND requestor = ?",
+            (room_id, requestor),
+        )
+        conn.commit()
+    return True, ""
+
+
+def invite_friend_to_group(room_id: str, actor: str, target: str) -> tuple[bool, str]:
     if actor == target:
         return False, "You are already in this group"
     conn = db_connect()
@@ -282,10 +430,71 @@ def add_friend_to_group(room_id: str, actor: str, target: str) -> tuple[bool, st
         if cursor.fetchone() is None:
             return False, "User not found"
         if not friendship_accepted(cursor, actor, target):
-            return False, "Only accepted friends can be added"
+            return False, "Only accepted friends can be invited"
         cursor.execute(
-            "INSERT OR IGNORE INTO room_members (room_id, username) VALUES (?, ?)",
+            "SELECT 1 FROM room_members WHERE room_id = ? AND username = ?",
             (room_id, target),
+        )
+        if cursor.fetchone() is not None:
+            return False, "This friend is already a member"
+        cursor.execute(
+            "SELECT status FROM room_member_invites WHERE room_id = ? AND target = ?",
+            (room_id, target),
+        )
+        row = cursor.fetchone()
+        if row is not None and row["status"] == "pending":
+            return True, "Invite already pending"
+        cursor.execute(
+            "INSERT OR REPLACE INTO room_member_invites (room_id, inviter, target, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            (room_id, actor, target, "pending", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+    return True, "Invite sent"
+
+
+def respond_room_invite(room_id: str, target: str, inviter: str, accept: bool) -> tuple[bool, str]:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT status FROM room_member_invites WHERE room_id = ? AND target = ? AND inviter = ?",
+            (room_id, target, inviter),
+        )
+        row = cursor.fetchone()
+        if row is None or row["status"] != "pending":
+            return False, "Invite not found"
+        if accept:
+            cursor.execute(
+                "INSERT OR IGNORE INTO room_members (room_id, username) VALUES (?, ?)",
+                (room_id, target),
+            )
+        cursor.execute(
+            "DELETE FROM room_member_invites WHERE room_id = ? AND target = ?",
+            (room_id, target),
+        )
+        conn.commit()
+    return True, ""
+
+
+def update_group_description(room_id: str, actor: str, description: str) -> tuple[bool, str]:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_group FROM rooms WHERE room_id = ?", (room_id,))
+        room_row = cursor.fetchone()
+        if room_row is None:
+            return False, "Room not found"
+        if not bool(room_row["is_group"]):
+            return False, "Only groups have descriptions"
+        cursor.execute(
+            "SELECT 1 FROM room_members WHERE room_id = ? AND username = ?",
+            (room_id, actor),
+        )
+        if cursor.fetchone() is None:
+            return False, "You are not a member of this room"
+        cursor.execute(
+            "UPDATE rooms SET description = ? WHERE room_id = ?",
+            (description.strip()[:300], room_id),
         )
         conn.commit()
     return True, ""
@@ -296,7 +505,7 @@ def get_user_rooms(username: str) -> list[dict]:
     with DB_LOCK:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT r.room_id, r.title, r.is_group FROM rooms r JOIN room_members m ON r.room_id = m.room_id WHERE m.username = ? ORDER BY r.created_at DESC",
+            "SELECT r.room_id, r.title, r.description, r.created_by, r.is_group FROM rooms r JOIN room_members m ON r.room_id = m.room_id WHERE m.username = ? ORDER BY r.created_at DESC",
             (username,),
         )
         rows = cursor.fetchall()
@@ -310,6 +519,16 @@ def get_user_rooms(username: str) -> list[dict]:
                 (row["room_id"],),
             )
             members = [member_row["username"] for member_row in cursor.fetchall()]
+            cursor.execute(
+                "SELECT id, sender, message, time, message_type, kind, filename FROM messages WHERE room = ? ORDER BY id DESC LIMIT 1",
+                (row["room_id"],),
+            )
+            last_message = cursor.fetchone()
+            last_message_text = ""
+            if last_message:
+                last_message_text = last_message["message"]
+                if last_message["message_type"] == "file":
+                    last_message_text = "Voice message" if last_message["kind"] == "voice" else last_message["filename"] or "Shared file"
             if not is_group:
                 peer = next((member for member in members if member != username), None)
                 if peer is None and title.startswith("Chat: "):
@@ -321,12 +540,93 @@ def get_user_rooms(username: str) -> list[dict]:
                 {
                     "room_id": row["room_id"],
                     "title": title,
+                    "description": row["description"] or "",
+                    "created_by": row["created_by"],
+                    "is_owner": row["created_by"] == username,
                     "is_group": is_group,
                     "peer": peer,
                     "members": members,
+                    "last_message_id": last_message["id"] if last_message else 0,
+                    "last_message_sender": last_message["sender"] if last_message else "",
+                    "last_message": last_message_text,
+                    "last_message_time": last_message["time"] if last_message else "",
                 }
             )
     return rooms
+
+
+def delete_room(room_id: str, actor: str) -> tuple[bool, str]:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute("SELECT created_by, is_group FROM rooms WHERE room_id = ?", (room_id,))
+        room_row = cursor.fetchone()
+        if room_row is None:
+            return False, "Room not found"
+        if not bool(room_row["is_group"]):
+            return False, "Only groups can be deleted"
+        if room_row["created_by"] != actor:
+            return False, "Only the group creator can delete this group"
+        cursor.execute("DELETE FROM messages WHERE room = ?", (room_id,))
+        cursor.execute("DELETE FROM room_members WHERE room_id = ?", (room_id,))
+        cursor.execute("DELETE FROM room_join_requests WHERE room_id = ?", (room_id,))
+        cursor.execute("DELETE FROM room_member_invites WHERE room_id = ?", (room_id,))
+        cursor.execute("DELETE FROM rooms WHERE room_id = ?", (room_id,))
+        conn.commit()
+    return True, ""
+
+
+def delete_account(username: str) -> None:
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT room_id FROM room_members WHERE username = ?",
+            (username,),
+        )
+        affected_rooms = [row["room_id"] for row in cursor.fetchall()]
+        cursor.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        cursor.execute(
+            "DELETE FROM friends WHERE requestor = ? OR target = ?",
+            (username, username),
+        )
+        cursor.execute(
+            "DELETE FROM room_join_requests WHERE requestor = ?",
+            (username,),
+        )
+        cursor.execute(
+            "DELETE FROM room_member_invites WHERE inviter = ? OR target = ?",
+            (username, username),
+        )
+        cursor.execute("DELETE FROM messages WHERE sender = ?", (username,))
+        cursor.execute("DELETE FROM room_members WHERE username = ?", (username,))
+        cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+        for room_id in affected_rooms:
+            cursor.execute(
+                "SELECT is_group, created_by FROM rooms WHERE room_id = ?",
+                (room_id,),
+            )
+            room_row = cursor.fetchone()
+            if room_row is None:
+                continue
+            cursor.execute(
+                "SELECT username FROM room_members WHERE room_id = ? ORDER BY username",
+                (room_id,),
+            )
+            remaining_members = [row["username"] for row in cursor.fetchall()]
+            should_delete = not remaining_members or not bool(room_row["is_group"])
+            if should_delete:
+                cursor.execute("DELETE FROM messages WHERE room = ?", (room_id,))
+                cursor.execute("DELETE FROM room_members WHERE room_id = ?", (room_id,))
+                cursor.execute("DELETE FROM room_join_requests WHERE room_id = ?", (room_id,))
+                cursor.execute("DELETE FROM room_member_invites WHERE room_id = ?", (room_id,))
+                cursor.execute("DELETE FROM rooms WHERE room_id = ?", (room_id,))
+            elif room_row["created_by"] == username:
+                cursor.execute(
+                    "UPDATE rooms SET created_by = ? WHERE room_id = ?",
+                    (remaining_members[0], room_id),
+                )
+        conn.commit()
 
 
 def get_or_create_direct_room(user1: str, user2: str) -> Optional[str]:
@@ -353,8 +653,8 @@ def get_or_create_direct_room(user1: str, user2: str) -> Optional[str]:
         cursor.execute("SELECT room_id FROM rooms WHERE room_id = ? AND is_group = 0", (room_id,))
         if cursor.fetchone() is None:
             cursor.execute(
-                "INSERT INTO rooms (room_id, title, created_by, created_at, is_group) VALUES (?, ?, ?, ?, ?)",
-                (room_id, f"Chat: {users[0]} + {users[1]}", user1, datetime.utcnow().isoformat(), 0),
+                "INSERT INTO rooms (room_id, title, description, created_by, created_at, is_group) VALUES (?, ?, ?, ?, ?, ?)",
+                (room_id, f"Chat: {users[0]} + {users[1]}", "", user1, datetime.utcnow().isoformat(), 0),
             )
             cursor.execute(
                 "INSERT OR IGNORE INTO room_members (room_id, username) VALUES (?, ?)",
@@ -422,6 +722,51 @@ def get_friend_data(username: str) -> dict:
             (username, username),
         )
         rows = cursor.fetchall()
+        cursor.execute(
+            """
+            SELECT j.room_id, j.requestor, r.title
+            FROM room_join_requests j
+            JOIN rooms r ON r.room_id = j.room_id
+            JOIN room_members m ON m.room_id = j.room_id
+            WHERE m.username = ? AND j.status = ? AND j.requestor != ?
+            ORDER BY j.created_at DESC
+            """,
+            (username, "pending", username),
+        )
+        incoming_join = [dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT j.room_id, j.requestor, r.title
+            FROM room_join_requests j
+            JOIN rooms r ON r.room_id = j.room_id
+            WHERE j.requestor = ? AND j.status = ?
+            ORDER BY j.created_at DESC
+            """,
+            (username, "pending"),
+        )
+        outgoing_join = [dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT i.room_id, i.inviter, i.target, r.title
+            FROM room_member_invites i
+            JOIN rooms r ON r.room_id = i.room_id
+            WHERE i.target = ? AND i.status = ?
+            ORDER BY i.created_at DESC
+            """,
+            (username, "pending"),
+        )
+        incoming_invite = [dict(row) for row in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT i.room_id, i.inviter, i.target, r.title
+            FROM room_member_invites i
+            JOIN rooms r ON r.room_id = i.room_id
+            WHERE i.inviter = ? AND i.status = ?
+            ORDER BY i.created_at DESC
+            """,
+            (username, "pending"),
+        )
+        outgoing_invite = [dict(row) for row in cursor.fetchall()]
     friends = []
     incoming = []
     outgoing = []
@@ -434,7 +779,15 @@ def get_friend_data(username: str) -> dict:
                 outgoing.append(row["target"])
             else:
                 incoming.append(row["requestor"])
-    return {"friends": sorted(friends), "incoming": sorted(incoming), "outgoing": sorted(outgoing)}
+    return {
+        "friends": sorted(friends),
+        "incoming": sorted(incoming),
+        "outgoing": sorted(outgoing),
+        "incoming_join": incoming_join,
+        "outgoing_join": outgoing_join,
+        "incoming_invite": incoming_invite,
+        "outgoing_invite": outgoing_invite,
+    }
 
 
 def send_friend_request(requestor: str, target: str) -> bool:
@@ -480,6 +833,35 @@ def respond_friend_request(requestor: str, target: str, accept: bool) -> bool:
             cursor.execute("DELETE FROM friends WHERE requestor = ? AND target = ?", (requestor, target))
         conn.commit()
     return True
+
+
+def remove_friendship(actor: str, target: str) -> bool:
+    if actor == target or not target:
+        return False
+    conn = db_connect()
+    with DB_LOCK:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM friends
+            WHERE (requestor = ? AND target = ?)
+               OR (requestor = ? AND target = ?)
+            """,
+            (actor, target, target, actor),
+        )
+        removed = cursor.rowcount > 0
+        users = sorted([actor, target])
+        direct_room_id = hashlib.sha256(f"direct:{users[0]}:{users[1]}".encode("utf-8")).hexdigest()[:16]
+        cursor.execute(
+            "SELECT room_id FROM rooms WHERE room_id = ? AND is_group = 0",
+            (direct_room_id,),
+        )
+        if cursor.fetchone() is not None:
+            cursor.execute("DELETE FROM messages WHERE room = ?", (direct_room_id,))
+            cursor.execute("DELETE FROM room_members WHERE room_id = ?", (direct_room_id,))
+            cursor.execute("DELETE FROM rooms WHERE room_id = ?", (direct_room_id,))
+        conn.commit()
+    return removed
 
 
 def read_json_body(handler: BaseHTTPRequestHandler) -> dict:
@@ -743,6 +1125,24 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             success = respond_friend_request(requestor, username, accept)
             self.send_json({"ok": success})
             return
+        if parsed.path == "/api/friends/remove":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            body = read_json_body(self)
+            target = str(body.get("target", "")).strip()
+            success = remove_friendship(username, target)
+            self.send_json({"ok": success})
+            return
+        if parsed.path == "/api/account/delete":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            delete_account(username)
+            self.send_json({"ok": True})
+            return
         if parsed.path == "/api/rooms":
             username = get_auth_user(self)
             if not username:
@@ -771,13 +1171,51 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             if not room_id or not target:
                 self.send_json({"ok": False, "error": "Room and friend are required"})
                 return
-            success, error = add_friend_to_group(room_id, username, target)
+            success, message = invite_friend_to_group(room_id, username, target)
+            self.send_json({"ok": success, "message": message, "pending": success, "error": "" if success else message})
+            return
+        if parsed.path == "/api/rooms/delete":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            body = read_json_body(self)
+            room_id = str(body.get("room_id", "")).strip()
+            if not room_id:
+                self.send_json({"ok": False, "error": "Room is required"})
+                return
+            success, error = delete_room(room_id, username)
+            if success:
+                hub.broadcast(
+                    room_id,
+                    {
+                        "type": "room_deleted",
+                        "room": room_id,
+                        "message": "This group was deleted",
+                        "time": now_text(),
+                    },
+                    exclude=None,
+                )
+            self.send_json({"ok": success, "error": error})
+            return
+        if parsed.path == "/api/rooms/description":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            body = read_json_body(self)
+            room_id = str(body.get("room_id", "")).strip()
+            description = str(body.get("description", ""))
+            if not room_id:
+                self.send_json({"ok": False, "error": "Room is required"})
+                return
+            success, error = update_group_description(room_id, username, description)
             if success:
                 hub.broadcast(
                     room_id,
                     {
                         "type": "system",
-                        "message": f"{target} was added to the group",
+                        "message": "Group description updated",
                         "time": now_text(),
                     },
                     exclude=None,
@@ -791,10 +1229,58 @@ class ChatWebHandler(BaseHTTPRequestHandler):
                 return
             body = read_json_body(self)
             room_id = str(body.get("room_id", "")).strip()
-            if not room_id or not add_room_member(room_id, username):
-                self.send_json({"ok": False, "error": "Room not found"})
+            if not room_id:
+                self.send_json({"ok": False, "error": "Room ID is required"})
                 return
-            self.send_json({"ok": True, "room_id": room_id})
+            success, message, pending = request_room_join(room_id, username)
+            if not success:
+                self.send_json({"ok": False, "error": message})
+                return
+            self.send_json({"ok": True, "room_id": room_id, "pending": pending, "message": message})
+            return
+        if parsed.path == "/api/rooms/respond-join":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            body = read_json_body(self)
+            room_id = str(body.get("room_id", "")).strip()
+            requestor = str(body.get("requestor", "")).strip()
+            accept = bool(body.get("accept", False))
+            success, error = respond_room_join_request(room_id, username, requestor, accept)
+            if success and accept:
+                hub.broadcast(
+                    room_id,
+                    {
+                        "type": "system",
+                        "message": f"{requestor} joined the group",
+                        "time": now_text(),
+                    },
+                    exclude=None,
+                )
+            self.send_json({"ok": success, "error": error})
+            return
+        if parsed.path == "/api/rooms/respond-invite":
+            username = get_auth_user(self)
+            if not username:
+                self.send_error(HTTPStatus.UNAUTHORIZED)
+                return
+            body = read_json_body(self)
+            room_id = str(body.get("room_id", "")).strip()
+            inviter = str(body.get("inviter", "")).strip()
+            accept = bool(body.get("accept", False))
+            success, error = respond_room_invite(room_id, username, inviter, accept)
+            if success and accept:
+                hub.broadcast(
+                    room_id,
+                    {
+                        "type": "system",
+                        "message": f"{username} joined the group",
+                        "time": now_text(),
+                    },
+                    exclude=None,
+                )
+            self.send_json({"ok": success, "error": error})
             return
         if parsed.path == "/api/rooms/direct":
             username = get_auth_user(self)
@@ -847,6 +1333,7 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             "url": f"/files/{urllib.parse.quote(output_path.name)}",
             "time": now_text(),
         }
+        payload["id"] = save_file_message(room, payload)
         hub.broadcast(room, payload)
         self.send_json({"ok": True, "file": payload})
 
@@ -892,15 +1379,27 @@ class ChatWebHandler(BaseHTTPRequestHandler):
             hub.leave(client)
 
     def handle_socket_message(self, client: WebClient, message: dict) -> None:
+        if not user_in_room(client.username, client.room):
+            self.send(
+                client,
+                {
+                    "type": "room_deleted",
+                    "room": client.room,
+                    "message": "This conversation is no longer available",
+                    "time": now_text(),
+                },
+            )
+            return
         message_type = message.get("type")
         if message_type == "chat":
             text = str(message.get("message", "")).strip()
             if text:
-                save_message(client.room, client.username, text)
+                message_id = save_message(client.room, client.username, text)
                 hub.broadcast(
                     client.room,
                     {
                         "type": "chat",
+                        "id": message_id,
                         "sender": client.username,
                         "message": text,
                         "time": now_text(),
